@@ -90,8 +90,8 @@ packaging
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/cwillisf/sonarise.git
-cd sonarise
+git clone https://github.com/SnickerSec/SonaRise.git
+cd SonaRise
 ```
 
 2. Create and activate virtual environment:
