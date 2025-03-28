@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=6.0
+pytest-cov
+black
+isort
+mypy
