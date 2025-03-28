@@ -36,6 +36,35 @@ This is a required step for all SonarQube upgrades.
 - Dedicated backup locations
 - Download streaming to prevent memory issues
 - Secure API token handling
+- Plugin validation and verification
+- Environment validation checks
+
+## Plugin Validation
+
+The tool performs extensive plugin validation:
+
+- File integrity checks
+- Size verification (minimum 1KB)
+- Extension validation (.jar only)
+- Secure permissions (0o644)
+- Progress tracking during copy
+- Atomic operations with rollback
+- Cleanup on failure
+
+## Environment Validation
+
+Pre-upgrade checks include:
+
+- Minimum free space requirements:
+  - Temp space: 100MB
+  - Backup space: 500MB
+- Required commands:
+  - unzip
+  - systemctl
+  - pg_dump
+- Directory permissions
+- Configuration validation
+- Service status
 
 ## Prerequisites
 
@@ -61,28 +90,55 @@ packaging
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-org/sonarqube-upgrade.git
-cd sonarqube-upgrade
+git clone https://github.com/cwillisf/sonarise.git
+cd sonarise
 ```
 
-2. Install dependencies:
+2. Create and activate virtual environment:
 
 ```bash
-pip install -r requirements.txt
+python -m venv venv
+source venv/bin/activate  # On Linux/Mac
+# OR
+.\venv\Scripts\activate   # On Windows
 ```
 
-3. Set required environment variables:
+3. Install the package in development mode:
 
 ```bash
-export SONARQUBE_TOKEN="your-token"
+pip install -e .         # Install package
+pip install -e .[dev]    # Install with development dependencies
 ```
 
-4. Create required directories with proper permissions:
+4. Set required environment variables:
 
 ```bash
-sudo mkdir -p /var/run/sonarqube /var/backup/sonarqube /var/tmp/sonarqube
-sudo chown -R $(whoami):$(whoami) /var/run/sonarqube /var/backup/sonarqube /var/tmp/sonarqube
-sudo chmod 700 /var/run/sonarqube /var/backup/sonarqube /var/tmp/sonarqube
+export SONARQUBE_URL="https://sonarqube.local"     # SonarQube instance URL
+export SONARQUBE_TOKEN="your-token"                # API token
+export SONARQUBE_VERIFY_SSL="true"                 # Optional: SSL verification
+export SONARQUBE_CERT_PATH="/path/to/cert"         # Optional: Custom certificate
+```
+
+5. Create required directories with proper permissions:
+
+```bash
+# Create directories
+sudo mkdir -p /var/run/sonarqube \
+             /var/backup/sonarqube \
+             /var/tmp/sonarqube \
+             /var/log/sonarqube/upgrade
+
+# Set ownership (replace USER with your username)
+sudo chown -R $USER:$USER /var/run/sonarqube \
+                         /var/backup/sonarqube \
+                         /var/tmp/sonarqube \
+                         /var/log/sonarqube/upgrade
+
+# Set secure permissions
+sudo chmod 700 /var/run/sonarqube \
+              /var/backup/sonarqube \
+              /var/tmp/sonarqube \
+              /var/log/sonarqube/upgrade
 ```
 
 ## Usage
@@ -154,13 +210,7 @@ The script automatically:
 - Basic version format validation
 - No version restrictions beyond these rules
 
-### Version Validation
-
-The script performs basic version validation:
-
-- Validates version string format
-- Ensures new version is greater than current version
-- Checks version parsing compatibility
+For detailed upgrade paths, see [SonarQube Update Center](https://docs.sonarqube.org/latest/setup/upgrade-notes/)
 
 ## Security Considerations
 
@@ -280,32 +330,51 @@ If database upgrade fails:
    ```
 
 3. Insufficient space:
+
    ```bash
    df -h /var/backup/sonarqube /var/tmp/sonarqube /opt
    ```
 
-### Database Migration Issues
-
-1. Database connection errors:
+4. Plugin validation failures:
 
    ```bash
-   # Check PostgreSQL logs
-   sudo tail -f /var/log/postgresql/postgresql-*.log
+   # Check plugin permissions
+   ls -l /opt/sonarqube/extensions/plugins/*.jar
+
+   # Verify plugin integrity
+   find /opt/sonarqube/extensions/plugins -type f -name "*.jar" -size -1024c
    ```
 
-2. Migration timeout:
+5. Environment check failures:
 
    ```bash
-   # Increase PostgreSQL statement timeout
-   ALTER DATABASE sonarqube SET statement_timeout = '1h';
-   ```
+   # Check available space
+   df -h /tmp /var/backup/sonarqube
 
-3. Insufficient privileges:
-   ```bash
-   # Grant required permissions
-   sudo -u postgres psql -c "ALTER USER sonarqube CREATEDB;"
+   # Verify required commands
+   which unzip systemctl pg_dump
    ```
 
 ## SSL Certificate Configuration
 
-To properly handle SSL verification, you can:
+To properly handle SSL verification, configure the following:
+
+1. Using a custom certificate:
+
+   ```bash
+   export SONARQUBE_CERT_PATH="/path/to/certificate.pem"
+   export SONARQUBE_VERIFY_SSL="true"
+   ```
+
+2. Using system certificates:
+
+   ```bash
+   export SONARQUBE_VERIFY_SSL="true"
+   ```
+
+3. Disable SSL verification (not recommended for production):
+   ```bash
+   export SONARQUBE_VERIFY_SSL="false"
+   ```
+
+For proper security, always verify SSL certificates in production environments.

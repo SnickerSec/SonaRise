@@ -21,7 +21,6 @@ from packaging import version
 from sonarise.config import ConfigError, FileConfig, load_config
 from sonarise.utils.logger import logger, structured_logger
 from sonarise.version_check import (
-    VersionCheckResult,
     sonarqube_get_latest,
     SonarQubeVersionChecker,
 )
@@ -549,40 +548,91 @@ def rollback_to_restore_point(restore_dir: str) -> None:
         raise UpgradeError(f"Failed to rollback to restore point: {str(e)}")
 
 
-def copy_plugins(source_dir: str, dest_dir: str):
-    """Copy plugins with proper error handling and validation."""
+def copy_plugins(source_dir: str | Path, dest_dir: str | Path) -> None:
+    """Copy plugins with proper error handling and validation.
+
+    Args:
+        source_dir: Source directory containing plugins
+        dest_dir: Destination directory for plugins
+
+    Raises:
+        UpgradeError: If plugin copy fails or validation fails
+    """
+    source_dir, dest_dir = Path(source_dir), Path(dest_dir)
     logger.info(f"Copying plugins from {source_dir} to {dest_dir}")
 
-    # Create plugins directory if it doesn't exist
-    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        # Create plugins directory with secure permissions
+        dest_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
 
-    # Get list of plugin files
-    plugin_files = list(Path(source_dir).glob("*.jar"))
+        # Get list of plugin files with validation
+        plugin_files = list(source_dir.glob("*.jar"))
+        if not plugin_files:
+            logger.warning("No plugins found to copy - continuing with upgrade")
+            return
 
-    if not plugin_files:
-        logger.warning("No plugins found to copy - continuing with upgrade")
-        return
+        # Validate source files before copying
+        for plugin in plugin_files:
+            if not plugin.is_file():
+                raise UpgradeError(f"Invalid plugin path: {plugin}")
+            if plugin.suffix != ".jar":
+                raise UpgradeError(f"Invalid plugin type: {plugin}")
+            if plugin.stat().st_size < 1024:  # Minimum 1KB
+                raise UpgradeError(f"Suspicious plugin size: {plugin}")
 
-    for plugin in plugin_files:
-        try:
-            dest_file = os.path.join(dest_dir, plugin.name)
-            shutil.copy2(str(plugin), dest_file)
-            logger.info(f"Copied plugin: {plugin.name}")
-        except Exception as e:
-            logger.error(f"Failed to copy plugin {plugin.name}: {str(e)}")
-            raise UpgradeError(f"Plugin copy failed: {str(e)}")
+        # Copy plugins with progress tracking
+        total_plugins = len(plugin_files)
+        for idx, plugin in enumerate(plugin_files, 1):
+            try:
+                dest_file = dest_dir / plugin.name
+                shutil.copy2(plugin, dest_file)
+                # Set secure permissions
+                dest_file.chmod(0o644)
+                logger.info(f"Copied plugin ({idx}/{total_plugins}): {plugin.name}")
+            except Exception as e:
+                raise UpgradeError(f"Failed to copy plugin {plugin.name}: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Plugin copy failed: {str(e)}")
+        # Cleanup partially copied plugins
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        raise UpgradeError(f"Plugin copy failed: {str(e)}")
 
 
 def validate_environment() -> None:
-    """Validate environment before upgrade"""
-    if os.geteuid() != 0:
-        raise UpgradeError("Script must be run as root")
+    """Validate environment before upgrade.
 
-    _, file_config = load_config()  # Keep file_config as it's used
+    Raises:
+        UpgradeError: If environment validation fails
+    """
     try:
+        if os.geteuid() != 0:
+            raise UpgradeError("Script must be run as root")
+
+        # Load and validate configuration
+        _, file_config = load_config()
         file_config.validate()
+
+        # Additional environment checks
+        system_checks = {
+            "temp_space": lambda: shutil.disk_usage("/tmp").free
+            > 1024 * 1024 * 100,  # 100MB
+            "backup_space": lambda: shutil.disk_usage(BACKUP_DIR).free
+            > 1024 * 1024 * 500,  # 500MB
+            "required_commands": lambda: all(
+                shutil.which(cmd) for cmd in ["unzip", "systemctl", "pg_dump"]
+            ),
+        }
+
+        for check_name, check_func in system_checks.items():
+            if not check_func():
+                raise UpgradeError(f"Environment check failed: {check_name}")
+
     except ConfigError as e:
-        raise UpgradeError(f"Configuration error: {e}")
+        raise UpgradeError(f"Configuration validation failed: {str(e)}")
+    except Exception as e:
+        raise UpgradeError(f"Environment validation failed: {str(e)}")
 
 
 def main() -> None:

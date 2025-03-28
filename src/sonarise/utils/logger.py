@@ -1,10 +1,8 @@
 from __future__ import annotations
 import logging
 import logging.handlers
-from datetime import datetime
 import uuid
 from contextlib import contextmanager
-from typing import Any
 
 
 class StructuredLogger:
